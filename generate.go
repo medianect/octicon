@@ -12,12 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
-
-	"dmitri.shuralyov.com/text/kebabcase"
-	"github.com/shurcooL/go-goon"
-	"golang.org/x/net/html"
-	"golang.org/x/net/html/atom"
 )
 
 var oFlag = flag.String("o", "", "write output to `file` (default standard output)")
@@ -29,6 +25,24 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+}
+
+// {"alert":
+//  {"name":"alert",
+//   "keywords":["warning","triangle","exclamation","point"],
+//   "heights":
+//    {"16":
+//     {"width":16,
+//      "path":"<path fill-rule=\"evenodd\" d=\"M8.22...\"></path>"},
+type octicon struct {
+	Name     string
+	Keywords []string
+	Heights  map[string]octicon_path
+}
+
+type octicon_path struct {
+	Width int
+	Path  string
 }
 
 func run() error {
@@ -54,37 +68,43 @@ func run() error {
 	fmt.Fprint(&buf, `package octicon
 
 import (
-	"strconv"
-
-	"golang.org/x/net/html"
-	"golang.org/x/net/html/atom"
+	"fmt"
 )
+
+type icon struct {
+	Width   int
+	Height  int
+	SVGFmt string
+}
+
+// IconMap is a map of octigons as fmt.Printf format strings,
+// sorted by their heights.
+var IconMap = map[string][]icon{
+`)
+	// Write all individual Octicon functions.
+	for _, name := range names {
+		generateAndWriteOcticon(&buf, name, octicons[name])
+	}
+
+	fmt.Fprint(&buf, `}
 
 // Icon returns the named Octicon SVG node.
 // It returns nil if name is not a valid Octicon symbol name.
-func Icon(name string) *html.Node {
-	switch name {
-`)
-	for _, name := range names {
-		fmt.Fprintf(&buf, "	case %q:\n		return %v()\n", name, kebabcase.Parse(name).ToMixedCaps())
+func Icon(name string, width int, height int) string {
+	icons, found := IconMap[name]
+	if !found {
+		return ""
 	}
-	fmt.Fprint(&buf, `	default:
-		return nil
+	var icon icon
+	for _, i := range(icons) {
+		icon = i
+		if icon.Height >= height {
+			break
+		}
 	}
-}
-
-// SetSize sets size of icon, and returns a reference to it.
-func SetSize(icon *html.Node, size int) *html.Node {
-	icon.Attr[`, widthAttrIndex, `].Val = strconv.Itoa(size)
-	icon.Attr[`, heightAttrIndex, `].Val = strconv.Itoa(size)
-	return icon
+	return fmt.Sprintf(icon.SVGFmt, width, height)
 }
 `)
-
-	// Write all individual Octicon functions.
-	for _, name := range names {
-		generateAndWriteOcticon(&buf, octicons, name)
-	}
 
 	var w io.Writer
 	switch *oFlag {
@@ -103,59 +123,35 @@ func SetSize(icon *html.Node, size int) *html.Node {
 	return err
 }
 
-type octicon struct {
-	Path   string
-	Width  int
-	Height float64
-}
-
-func generateAndWriteOcticon(w io.Writer, octicons map[string]octicon, name string) {
-	svgXML := generateOcticon(octicons[name])
-
-	svg := parseOcticon(svgXML)
-	// Clear these fields to remove cycles in the data structure, since go-goon
-	// cannot print those in a way that's valid Go code. The generated data structure
-	// is not a proper *html.Node with all fields set, but it's enough for rendering
-	// to be successful.
-	svg.LastChild = nil
-	svg.FirstChild.Parent = nil
-
+func generateAndWriteOcticon(w io.Writer, name string, icon octicon) error {
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "// %s returns an %q Octicon SVG node.\n", kebabcase.Parse(name).ToMixedCaps(), name)
-	fmt.Fprintf(w, "func %s() *html.Node {\n", kebabcase.Parse(name).ToMixedCaps())
-	fmt.Fprint(w, "	return ")
-	goon.Fdump(w, svg)
-	fmt.Fprintln(w, "}")
-}
-
-// These constants are used during generation of SetSize function.
-// Keep them in sync with generateOcticon below.
-const (
-	widthAttrIndex  = 1
-	heightAttrIndex = 2
-)
-
-// TODO: Short-circuit generateOcticon and parseOcticon.
-
-func generateOcticon(o octicon) (svgXML string) {
-	path := o.Path
-	if strings.HasPrefix(path, `<path fill-rule="evenodd" `) {
-		// Skip fill-rule, if present. It has no effect on displayed SVG, but takes up space.
-		path = `<path ` + path[len(`<path fill-rule="evenodd" `):]
+	fmt.Fprintf(w, "	\"%s\": []icon{\n", name)
+	// Browse paths in height order, so that use-time icon height selection
+	// will just have to walk the path list once 
+	var heights []string
+	for heightStr := range(icon.Heights) {
+		heights = append(heights, heightStr)
 	}
-	// Note, SetSize relies on the absolute position of the width, height attributes.
-	// Keep them in sync with widthAttrIndex and heightAttrIndex.
-	return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width=16 height=16 viewBox="0 0 %v %v">%s</svg>`,
-		o.Width, o.Height, path)
-}
-
-func parseOcticon(svgXML string) *html.Node {
-	e, err := html.ParseFragment(strings.NewReader(svgXML), nil)
-	if err != nil {
-		panic(fmt.Errorf("internal error: html.ParseFragment failed: %v", err))
+	sort.Strings(heights)
+	for _, key := range(heights) {
+		height, err := strconv.Atoi(key)
+		if err != nil {
+			return err
+		}
+		width := icon.Heights[key].Width
+		path := icon.Heights[key].Path
+		// fmt.Printf("generateOcticon: path is:\n%s\n", path)
+		if strings.HasPrefix(path, `<path fill-rule="evenodd" `) {
+			// Skip fill-rule, if present. It has no effect on displayed SVG, but takes up space.
+			path = `<path ` + path[len(`<path fill-rule="evenodd" `):]
+		}
+		// Note, SetSize relies on the absolute position of the width, height attributes.
+		// Keep them in sync with widthAttrIndex and heightAttrIndex.
+		svgXML := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%%d" height="%%d" viewBox="0 0 %v %v">%s</svg>`,
+			width, height, path)
+		fmt.Printf("Dumping %s(%dx%d)...\n", name, width, height)
+		fmt.Fprintf(w, "		icon{Width:%d, Height:%d, SVGFmt:`%s`,},\n", width, height, svgXML)
 	}
-	svg := e[0].LastChild.FirstChild // TODO: Is there a better way to just get the <svg>...</svg> element directly, skipping <html><head></head><body><svg>...</svg></body></html>?
-	svg.Parent.RemoveChild(svg)
-	svg.Attr = append(svg.Attr, html.Attribute{Key: atom.Style.String(), Val: `fill: currentColor; vertical-align: top;`})
-	return svg
+	fmt.Fprintf(w, "	},\n")
+	return nil
 }

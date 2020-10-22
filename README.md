@@ -12,6 +12,12 @@ Installation
 go get -u github.com/shurcooL/octicon
 ```
 
+Updating to new octicon release
+-------------------------------
+
+Update the `go:generate` comment which downloads the release to the new URL
+then run `go generate`.
+
 License
 -------
 
