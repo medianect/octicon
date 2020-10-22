@@ -10,7 +10,7 @@ import (
 func Example() {
 	str := octicon.Icon("alert", 28, 28)
 	if str == "" {
-		log.Fatalln(err)
+		log.Fatalln("Icon doesn't exist.")
 	}
 	fmt.Printf("%s", str)
 	// Output:
