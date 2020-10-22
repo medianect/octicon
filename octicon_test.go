@@ -8,8 +8,8 @@ import (
 )
 
 func Example() {
-	str, err := octicon.Icon("alert", 28, 28)
-	if err != nil {
+	str := octicon.Icon("alert", 28, 28)
+	if str == "" {
 		log.Fatalln(err)
 	}
 	fmt.Printf("%s", str)
