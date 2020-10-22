@@ -7,5 +7,6 @@ package octicon
 //go:generate mv package/build/data.json _data/data.json
 //go:generate rmdir -p package/build
 //go:generate go run generate.go -o octicon.go
-//go:generate unconvert -apply
+// Unconvert: go get github.com/mdempsky/unconvert
+//go:generate $HOME/go/bin/unconvert -apply
 //go:generate gofmt -w -s octicon.go
